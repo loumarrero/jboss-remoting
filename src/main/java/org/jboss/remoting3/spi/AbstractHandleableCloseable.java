@@ -48,6 +48,8 @@ public abstract class AbstractHandleableCloseable<T extends HandleableCloseable<
     private static final Logger log = Logger.getLogger("org.jboss.remoting.resource");
     private static final boolean LEAK_DEBUGGING;
 
+    private static final int CLOSED_WAIT_TIMEOUT;
+
     private final Executor executor;
     private final StackTraceElement[] backtrace;
     private final boolean autoClose;
@@ -75,6 +77,17 @@ public abstract class AbstractHandleableCloseable<T extends HandleableCloseable<
             b = false;
         }
         LEAK_DEBUGGING = b;
+
+        int timeout = 60000;
+        try {
+            timeout = AccessController.doPrivileged(new PrivilegedAction<Integer>() {
+                public Integer run() {
+                    return Integer.getInteger("jboss.remoting.closeWaitTimeout", 60000);
+                }
+            });
+        } catch (SecurityException se) {
+        }
+        CLOSED_WAIT_TIMEOUT = timeout;
     }
 
     /**
@@ -133,7 +146,7 @@ public abstract class AbstractHandleableCloseable<T extends HandleableCloseable<
      */
     @SuppressWarnings("unchecked")
     public void close() throws IOException {
-        log.tracef("Closing %s synchronously", this);
+        log.tracef("Closing %s synchronously, timeout = %d", this,CLOSED_WAIT_TIMEOUT);
         boolean first = false;
         synchronized (closeLock) {
             switch (state) {
@@ -186,7 +199,8 @@ public abstract class AbstractHandleableCloseable<T extends HandleableCloseable<
         final IOException failure;
         synchronized (closeLock) {
             while (state != State.CLOSED) try {
-                closeLock.wait();
+                closeLock.wait(CLOSED_WAIT_TIMEOUT);
+                state = State.CLOSED;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new InterruptedIOException("Interrupted while waiting for close to complete");
@@ -328,7 +342,7 @@ public abstract class AbstractHandleableCloseable<T extends HandleableCloseable<
     public void awaitClosed() throws InterruptedException {
         synchronized (closeLock) {
             while (state != State.CLOSED) {
-                closeLock.wait();
+                closeLock.wait(CLOSED_WAIT_TIMEOUT);
             }
         }
     }
@@ -340,7 +354,7 @@ public abstract class AbstractHandleableCloseable<T extends HandleableCloseable<
             synchronized (closeLock) {
                 while (state != State.CLOSED) {
                     try {
-                        closeLock.wait();
+                        closeLock.wait(CLOSED_WAIT_TIMEOUT);
                     } catch (InterruptedException e) {
                         intr = true;
                     }
