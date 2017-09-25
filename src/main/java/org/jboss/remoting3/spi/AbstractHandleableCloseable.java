@@ -78,14 +78,15 @@ public abstract class AbstractHandleableCloseable<T extends HandleableCloseable<
         }
         LEAK_DEBUGGING = b;
 
-        int timeout = 60000;
+        int timeout;
         try {
             timeout = AccessController.doPrivileged(new PrivilegedAction<Integer>() {
                 public Integer run() {
-                    return Integer.getInteger("jboss.remoting.closeWaitTimeout", 60000);
+                    return Integer.getInteger("jboss.remoting.closeWaitTimeout", 20000);
                 }
             });
         } catch (SecurityException se) {
+            timeout = 20000;
         }
         CLOSED_WAIT_TIMEOUT = timeout;
     }
@@ -200,10 +201,14 @@ public abstract class AbstractHandleableCloseable<T extends HandleableCloseable<
         synchronized (closeLock) {
             while (state != State.CLOSED) try {
                 closeLock.wait(CLOSED_WAIT_TIMEOUT);
-                state = State.CLOSED;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new InterruptedIOException("Interrupted while waiting for close to complete");
+            }finally {
+                state = State.CLOSED;
+                try{
+                   closeLock.notifyAll();
+                }catch(Exception ignore){}
             }
             failure = this.failure;
             this.failure = null;
